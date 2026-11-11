@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ski-Verleih</title>
+<style>
+body{margin:0;font-family:system-ui,sans-serif;background:#f4f6f8;color:#222}
+nav{background:#2c3e50;padding:10px 24px;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center}
+nav b{color:#fff;font-size:20px;margin-right:auto}
+nav a{color:#cfd8e0;cursor:pointer;padding:6px 10px;border-radius:4px}nav a:hover{color:#fff}nav a.on{background:#3d566e;color:#fff}
+main{max-width:980px;margin:20px auto;background:#fff;padding:24px;border-radius:8px}
+h2{margin-top:0;border-bottom:2px solid #3498db;padding-bottom:8px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+.c{color:#fff;border-radius:8px;padding:20px;text-align:center;cursor:pointer;transition:transform .1s}.c:hover{transform:translateY(-2px)}
+.c span{display:block;font-size:36px;font-weight:700}
+.a{background:#667eea}.r{background:#f5576c}.t{background:#00b4db}.p{background:#2ecc71}
+button{background:#3498db;color:#fff;border:0;padding:9px 16px;border-radius:4px;cursor:pointer;margin:2px;font-size:14px}
+button:hover{filter:brightness(.92)}button.g{background:#27ae60}button.d{background:#e74c3c}
+:focus-visible{outline:3px solid #f1c40f;outline-offset:1px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:12px}
+label{display:flex;flex-direction:column;font-size:13px;color:#555;gap:3px}
+input,select{padding:8px;border:1px solid #bbb;border-radius:4px;font-size:14px}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;margin-top:12px}
+td,th{padding:8px;border-bottom:1px solid #e3e3e3;text-align:left}tr:hover td{background:#f8fafc}
+.b{padding:2px 9px;border-radius:10px;font-size:12px;color:#fff}.b.g{background:#27ae60}.b.r{background:#e74c3c}.b.o{background:#e67e22}.b.x{background:#95a5a6}
+.hint{background:#eaf4fd;border-left:4px solid #3498db;padding:10px 14px;margin:12px 0;border-radius:4px}
+.empty{color:#888;text-align:center;padding:20px}
+.pv{font-weight:600;margin:6px 0 10px}
+#toasts{position:fixed;right:16px;bottom:16px;display:flex;flex-direction:column;gap:8px}
+.toast{background:#27ae60;color:#fff;padding:12px 18px;border-radius:6px;box-shadow:0 2px 8px #0003}.toast.err{background:#e74c3c}
+</style></head><body>
+<nav><b>Ski-Verleih</b><a data-v=dash onclick="go('dash')">Dashboard</a><a data-v=items onclick="go('items')">Ski-Verwaltung</a>
+<a data-v=persons onclick="go('persons')">Personen</a><a data-v=rentals onclick="go('rentals')">Ausleihen</a><a data-v=prices onclick="go('prices')">Preise</a></nav>
+<main id="v" aria-live="polite"></main><div id="toasts"></div>
+<script>
+const $=id=>document.getElementById(id), v=$('v');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+const eur=n=>n.toLocaleString('de-AT',{style:'currency',currency:'EUR'});
+const fmt=d=>new Date(d).toLocaleString('de-AT',{dateStyle:'short',timeStyle:'short'});
+const val=id=>$(id).value.trim();
+const enter=f=>`onkeydown="if(event.key==='Enter')${f}()"`;
+function toast(msg,err){const t=document.createElement('div');t.className='toast'+(err?' err':'');t.textContent=msg;$('toasts').append(t);setTimeout(()=>t.remove(),3500)}
+async function api(m,p,b){
+  const r=await fetch('/api'+p,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});
+  if(!r.ok){toast(await r.text(),true);throw new Error('api')}
+  return r.json();
+}
+let tiers=[],itemsData=[],priceMap={},rentalsData=[],names={},pre=null;
+async function go(n){if(!tiers.length)tiers=await api('GET','/tiers');document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.dataset.v===n));await views[n]()}
+const views={
+async dash(){
+  const d=await api('GET','/dashboard');
+  v.innerHTML=`<h2>Dashboard</h2><div class=cards>
+  <div class="c a" onclick="go('items')">Verfügbare Ski<span>${d.available}</span></div>
+  <div class="c r" onclick="go('rentals')">Ausgeliehene Ski<span>${d.rented}</span></div>
+  <div class="c t" onclick="go('items')">Gesamt Ski<span>${d.total}</span></div>
+  <div class="c p" onclick="go('persons')">Registrierte Personen<span>${d.persons}</span></div></div>
+  ${d.persons==0?'<div class=hint>Tipp: Legen Sie zuerst unter „Personen“ eine Person an, damit Sie ausleihen können.</div>':''}
+  <h3>Schnellzugriff</h3><button onclick="go('items')">Ski verwalten</button>
+  <button onclick="go('persons')">Personen verwalten</button><button class=g onclick="go('rentals')">Neue Ausleihe</button>`;
+},
+async items(){
+  const [it,pr]=await Promise.all([api('GET','/items'),api('GET','/prices')]);itemsData=it;priceMap=pr;
+  v.innerHTML=`<h2>Ski-Verwaltung</h2><div class=row>
+  <label>Nr.<input id=n placeholder="z. B. SKI-007" ${enter('addItem')}></label>
+  <label>Typ<select id=t>${Object.keys(pr).map(t=>`<option>${esc(t)}</option>`).join('')}</select></label>
+  <button onclick="addItem()">Hinzufügen</button></div>
+  <input id=q type=search placeholder="Suchen (Nr. oder Typ) …" oninput="drawItems()" style="width:100%;box-sizing:border-box">
+  <div class=tw id=tb></div>`;
+  drawItems();$('n').focus();
+},
+async persons(){
+  const ps=await api('GET','/persons');
+  v.innerHTML=`<h2>Personen (${ps.length})</h2><div class=row>
+  <label>Name<input id=n placeholder="Vor- und Nachname" ${enter('addPerson')}></label>
+  <label>Alter<input id=a type=number min=1 max=120 placeholder="Jahre" style="width:90px" ${enter('addPerson')}></label><button onclick="addPerson()">Hinzufügen</button></div>
+  ${ps.length?`<div class=tw><table>${ps.map(p=>`<tr><td>${esc(p.name)}<td>${p.age} Jahre ${p.age<18?'<span class="b o">minderjährig</span>':''}</tr>`).join('')}</table></div>`:'<p class=empty>Noch keine Personen registriert.</p>'}`;
+  $('n').focus();
+},
+async rentals(){
+  const [it,ps,rs,pr]=await Promise.all([api('GET','/items'),api('GET','/persons'),api('GET','/rentals'),api('GET','/prices')]);
+  itemsData=it;priceMap=pr;rentalsData=rs;
+  names={items:Object.fromEntries(it.map(i=>[i.id,i.number])),persons:Object.fromEntries(ps.map(p=>[p.id,p.name])),ages:Object.fromEntries(ps.map(p=>[p.id,p.age])),adults:ps.filter(p=>p.age>=18)};
+  const free=it.filter(i=>!i.rented),now=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+  v.innerHTML=`<h2>Ausleihen</h2>
+  ${!free.length?'<div class=hint>Aktuell ist kein Ski verfügbar.</div>':''}${!ps.length?'<div class=hint>Bitte zuerst eine Person anlegen.</div>':''}
+  <div class=row>
+  <label>Ski<select id=i onchange="preview()"></select></label>
+  <label>Person<select id=p onchange="refreshItems()">${ps.map(p=>`<option value=${p.id}>${esc(p.name)} (${p.age})</option>`).join('')}</select></label>
+  <label id=sl style="display:none">Aufsichtsperson (volljährig)<select id=sv>${names.adults.map(p=>`<option value=${p.id}>${esc(p.name)}</option>`).join('')}</select></label>
+  <label>Beginn<input id=s type=datetime-local value="${now}" oninput="preview()"></label>
+  <label>Dauer (Stunden, max. 72)<input id=h type=number min=1 max=72 value=2 style="width:90px" oninput="preview()"></label>
+  <label>Preis/h (optional)<input id=pr type=number step=0.5 min=0 placeholder="Standard" style="width:110px" oninput="preview()"></label>
+  <button class=g onclick="rent()">Ausleihen</button></div>
+  <div id=info></div>
+  <div class=pv id=pv></div>
+  <label style="flex-direction:row;align-items:center;gap:6px"><input type=checkbox id=act checked onchange="drawRentals()"> Nur aktive Ausleihen anzeigen</label>
+  <div class=tw id=tb></div>`;
+  refreshItems();pre=null;drawRentals();
+},
+async prices(){
+  const pr=await api('GET','/prices');
+  v.innerHTML=`<h2>Preise pro Stunde</h2><div class=hint>Diese Preise gelten als Standard für neue Ausleihen. Bei einer Ausleihe kann der Preis überschrieben werden.</div>
+  <div class=tw><table>${Object.entries(pr).map(([t,p])=>`<tr><td>${esc(t)}
+  <td><input id="p-${esc(t)}" type=number step=0.5 min=0 value=${p} ${enter("setPrice('"+esc(t)+"')")}> €/h
+  <td><button onclick="setPrice('${esc(t)}')">Speichern</button></tr>`).join('')}</table></div>
+  ${priceExamples(pr)}`;
+}};
+function drawItems(){
+  const q=$('q').value.toLowerCase(),l=itemsData.filter(i=>(i.number+' '+i.type).toLowerCase().includes(q));
+  $('tb').innerHTML=l.length?`<table><tr><th>Nr.<th>Typ<th>Status<th></tr>${l.map(i=>`<tr><td>${esc(i.number)}<td>${esc(i.type)}
+  <td><span class="b ${i.rented?'r':'g'}">${i.rented?'ausgeliehen':'verfügbar'}</span>
+  <td>${i.rented?'':`<button class=g onclick="quickRent(${i.id})">Ausleihen</button>`}<button class=d onclick="delItem(${i.id},'${esc(i.number)}')">Löschen</button></tr>`).join('')}</table>`:'<p class=empty>Keine Einträge gefunden.</p>';
+}
+function drawRentals(){
+  const only=$('act').checked,l=rentalsData.filter(r=>!only||!r.returned),now=new Date();
+  $('tb').innerHTML=l.length?`<table><tr><th>Ski<th>Person<th>Beginn<th>Ende<th>€/h<th>Gesamt<th>Status<th></tr>${l.map(r=>`<tr>
+  <td>${esc(names.items[r.item_id])}<td>${esc(names.persons[r.person_id])}<td>${fmt(r.start)}<td>${fmt(r.end)}<td>${r.price_per_hour.toFixed(2)}<td>${eur(r.total)}${r.discount?` <small>(−${Math.round(r.discount*100)} %)</small>`:''}
+  <td>${r.returned?'<span class="b x">zurückgegeben</span>':new Date(r.end)<now?'<span class="b o">überfällig</span>':'<span class="b r">aktiv</span>'}
+  <td>${r.returned?'':`<button onclick="ret(${r.id})">Zurückgeben</button>`}</tr>`).join('')}</table>`:'<p class=empty>Keine Ausleihen vorhanden.</p>';
+}
+function refreshItems(){
+  const pid=+$('p').value||0,act=rentalsData.filter(r=>!r.returned&&r.person_id===pid),now=new Date();
+  const typeOf=id=>(itemsData.find(i=>i.id===id)||{}).type,types=[...new Set(act.map(r=>typeOf(r.item_id)))];
+  const free=itemsData.filter(i=>!i.rented&&(!types.length||i.type===types[0]));
+  $('i').innerHTML=free.map(i=>`<option value=${i.id} ${i.id===pre?'selected':''}>${esc(i.number)} (${esc(i.type)})</option>`).join('');
+  let msg='';
+  if(types.length)msg+=`<div class=hint>${esc(names.persons[pid])} hat ${act.length} aktive Ausleihe(n) vom Typ „${esc(types[0])}“. Bis zur Rückgabe können nur Artikel dieses Typs ausgeliehen werden (max. 4 gleichzeitig).</div>`;
+  if(act.some(r=>new Date(r.end)<now))msg+='<div class=hint style="background:#fdecea;border-color:#e74c3c">Diese Person hat eine überfällige Ausleihe und muss zuerst zurückgeben.</div>';
+  $('sl').style.display=names.ages[pid]<18?'':'none';$('info').innerHTML=msg;preview();
+}
+const disc=h=>tiers.filter(t=>h>=t.min_hours).reduce((m,t)=>Math.max(m,t.discount),0);
+const total=(h,p)=>Math.round(h*p*(1-disc(h))*100)/100;
+function priceExamples(pr){
+  const hs=[1,2,4,8,24];
+  return `<h3>Preisbeispiele (inkl. Mengenrabatt)</h3><div class=hint>${tiers.map(t=>`ab ${t.min_hours} h: ${Math.round(t.discount*100)} % Rabatt`).join(' · ')}. Maximal 72 Stunden pro Ausleihe.</div>
+  <div class=tw><table><tr><th>Typ${hs.map(h=>`<th>${h} h`).join('')}</tr>${Object.entries(pr).map(([t,p])=>`<tr><td>${esc(t)}${hs.map(h=>`<td>${eur(total(h,p))}`).join('')}</tr>`).join('')}</table></div>`;
+}
+function preview(){
+  const it=itemsData.find(i=>i.id==$('i').value),h=+$('h').value,s=new Date($('s').value);
+  if(!it||!(h>=1)||isNaN(s)){$('pv').textContent='';return}
+  const p=+$('pr').value||priceMap[it.type];
+  const d=disc(h);$('pv').textContent=`Ende: ${fmt(new Date(s.getTime()+h*3600000))} · ${h} h × ${eur(p)}${d?` − ${Math.round(d*100)} % Mengenrabatt`:''} = ${eur(total(h,p))}`;
+}
+const quickRent=id=>{pre=id;go('rentals')};
+async function addItem(){await api('POST','/items',{number:val('n'),type:val('t')});toast('Ski hinzugefügt');go('items')}
+async function delItem(id,n){if(!confirm('Ski '+n+' wirklich löschen?'))return;await api('DELETE','/items/'+id);toast('Gelöscht');go('items')}
+async function addPerson(){await api('POST','/persons',{name:val('n'),age:+val('a')});toast('Person hinzugefügt');go('persons')}
+async function rent(){await api('POST','/rentals',{item_id:+val('i'),person_id:+val('p'),start:new Date(val('s')).toISOString(),hours:+val('h'),price_per_hour:+val('pr')||0,supervisor_id:names.ages[+val('p')]<18?+val('sv'):0});toast('Ausleihe gestartet');go('rentals')}
+async function ret(id){if(!confirm('Rückgabe bestätigen?'))return;await api('POST','/rentals/'+id+'/return');toast('Zurückgegeben');go('rentals')}
+async function setPrice(t){await api('PUT','/prices/'+t,{price:+val('p-'+t)});toast('Preis gespeichert');go('prices')}
+go('dash');
+</script></body></html>
